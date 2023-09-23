@@ -80,3 +80,7 @@ config_value_3="some other other value"
 Environment variables for the application can be set using the top level keys in the file (e.g. `SECRET_ENV_VAR_1`).
 
 The configuration can be loaded from a subset of this file in `CONFIG`. The `CONFIG` key will be the name from the [`Args::config_variable_name`] which is `CONFIG` by default.
+
+## Changelog
+
+See [CHANGELOG.md](https://github.com/kellpossible/toml-env/blob/master/CHANGELOG.md) for an account of changes to this library.
