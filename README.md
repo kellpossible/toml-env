@@ -90,6 +90,7 @@ use tempfile::tempdir;
 use toml_env::{Args, initialize, Logging};
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Config {
     value_1: String,
     value_2: bool,
@@ -97,10 +98,12 @@ struct Config {
 }
 
 #[derive(Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct Child {
     value_3: i32,
     value_4: u8,
 }
+
 let dir = tempdir().unwrap();
 let dotenv_path = dir.path().join(".env.toml");
 let config_path = dir.path().join("config.toml");
@@ -137,6 +140,7 @@ std::fs::write(
     r#"
 value_1="Something from config.toml"
 value_2=false
+[child]
 value_4=45
 "#,
 )
