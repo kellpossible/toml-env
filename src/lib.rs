@@ -71,14 +71,14 @@ pub enum Error {
         error: toml::de::Error,
     },
     /// Cannot parse a table in the `.toml.env` file.
-    #[error("Cannot parse table {key} as environment variable in {path:?}. Only a table with {variable_name} is allowed in a .toml.env format file.")]
-    CannotParseTomlDotEnvFileTable {
+    #[error("Cannot parse {key} as environment variable in {path:?}. Advice: {advice}")]
+    CannotParseTomlDotEnvFile {
         /// Key in the TOML file.
         key: String,
         /// Path to the file.
         path: PathBuf,
-        /// Name of the environment variable used as the key.
-        variable_name: String,
+        /// Advice
+        advice: String,
     },
     /// Error parsing envirnment variable
     #[error("Error parsing config key ({name}) in TOML config file {path:?}")]
@@ -246,10 +246,10 @@ fn initialize_dotenv_toml<C: DeserializeOwned + Serialize>(
         let value_string = match value {
             toml::Value::Table(_) => {
                 if key.as_str() != *config_variable_name {
-                    return Err(Error::CannotParseTomlDotEnvFileTable {
+                    return Err(Error::CannotParseTomlDotEnvFile {
                         key,
                         path: path.to_owned(),
-                        variable_name: (*config_variable_name).to_owned(),
+                        advice: format!("Only a table with {config_variable_name} is allowed in a .toml.env format file."),
                     });
                 }
                 match C::deserialize(value.clone()) {
@@ -262,12 +262,25 @@ fn initialize_dotenv_toml<C: DeserializeOwned + Serialize>(
                         })
                     }
                 }
-                value.to_string()
+                None
             }
-            _ => value.to_string(),
+            toml::Value::String(value) => Some(value),
+            toml::Value::Integer(value) => Some(value.to_string()),
+            toml::Value::Float(value) => Some(value.to_string()),
+            toml::Value::Boolean(value) => Some(value.to_string()),
+            toml::Value::Datetime(value) => Some(value.to_string()),
+            toml::Value::Array(value) => {
+                return Err(Error::CannotParseTomlDotEnvFile {
+                    key,
+                    path: path.to_owned(),
+                    advice: format!("Array values are not supported: {value:?}"),
+                })
+            }
         };
 
-        std::env::set_var(key.as_str(), value_string)
+        if let Some(value_string) = value_string {
+            std::env::set_var(key.as_str(), value_string)
+        }
     }
     Ok(config)
 }
