@@ -1,0 +1,16 @@
+[package]
+name = "toml-env"
+version = "0.1.0"
+edition = "2021"
+authors = ["Luke Frisken <l.frisken@gmail.com>"]
+description = "A simple configuration library using TOML"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/kellpossible/toml-env"
+
+[dependencies]
+serde = "1.0.188"
+toml = "0.8.0"
+serde-toml-merge = "0.3.2"
+thiserror = "1.0.48"
+log = { version = "0.4.20", optional = true }
