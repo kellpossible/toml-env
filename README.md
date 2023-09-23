@@ -1,8 +1,8 @@
 # `toml-env`
 
-A simple configuration library using [`toml`].
+A simple configuration library using `toml`.
 
-This library is designed to load a configuration for an application at startup using the [`initialize()`] function. The configuration can be loaded (in order of preference):
+This library is designed to load a configuration for an application at startup using the `initialize()` function. The configuration can be loaded (in order of preference):
 
 1. From a dotenv style file `.env.toml` (a file name of your choosing)
 2. From an environment variable `CONFIG` (or a variable name of your choosing).
@@ -30,7 +30,7 @@ Why would you use this one?
 
 ## Config Struct
 
-Firstly you need to define your struct which implements [`serde::de::DeserializeOwned`] + [`serde::Serialize`] + [`Default`]:
+Firstly you need to define your struct which implements `serde::de::DeserializeOwned` + `serde::Serialize` + `Default`:
 
 ```rust
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -48,11 +48,11 @@ struct ConfigChild {
 
 ## Environment Variable `CONFIG`
 
-The
+You can specify the configuration by storing it in the variable name as specified using `Args::config_variable_name` (`CONFIG` by default).
 
 ```bash
 # Store a multiline string into an environment variable.
-read -r -d '' VAR << EOM
+read -r -d '' CONFIG << EOM
 config_value_1="some value"
 config_value_2="some other value"
 
@@ -79,7 +79,7 @@ config_value_3="some other other value"
 
 Environment variables for the application can be set using the top level keys in the file (e.g. `SECRET_ENV_VAR_1`).
 
-The configuration can be loaded from a subset of this file in `CONFIG`. The `CONFIG` key will be the name from the [`Args::config_variable_name`] which is `CONFIG` by default.
+The configuration can be loaded from a subset of this file in `CONFIG`. The `CONFIG` key will be the name from the `Args::config_variable_name` which is `CONFIG` by default.
 
 ## Changelog
 
