@@ -205,7 +205,7 @@ impl FromStr for TomlKeyPath {
 }
 
 /// Args as input to [`initialize()`].
-pub struct Args<'a> {
+pub struct Args<'a, M = HashMap<&'a str, TomlKeyPath>> {
     /// Path to `.env.toml` format file. The value is [`DEFAULT_DOTENV_PATH`] by default.
     pub dotenv_path: &'a Path,
     /// Path to a config file to load.
@@ -215,17 +215,20 @@ pub struct Args<'a> {
     /// What method of logging to use (if any). [`Logging::None`] by default.
     pub logging: Logging,
     /// Map the specified environment variables into config keys.
-    pub map_env: HashMap<String, TomlKeyPath>,
+    pub map_env: M,
 }
 
-impl Default for Args<'static> {
+impl<M> Default for Args<'static, M>
+where
+    M: Default,
+{
     fn default() -> Self {
         Self {
             dotenv_path: Path::new(DEFAULT_DOTENV_PATH),
             config_path: None,
             config_variable_name: DEFAULT_CONFIG_VARIABLE_NAME,
             logging: Logging::default(),
-            map_env: HashMap::default(),
+            map_env: M::default(),
         }
     }
 }
@@ -241,13 +244,10 @@ fn log_info(logging: Logging, args: std::fmt::Arguments<'_>) {
 
 /// Reads and parses the .env.toml file (or whatever is specified in `dotenv_path`). Returns
 /// `Some(C)` if the file contains a table with the name matching `config_variable_name`.
-fn initialize_dotenv_toml<C: DeserializeOwned + Serialize>(
-    Args {
-        dotenv_path,
-        config_variable_name,
-        logging,
-        ..
-    }: &Args,
+fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
+    dotenv_path: &'a Path,
+    config_variable_name: &'a str,
+    logging: Logging,
 ) -> Result<Option<C>> {
     let path = Path::new(dotenv_path);
     if !path.exists() {
@@ -255,7 +255,7 @@ fn initialize_dotenv_toml<C: DeserializeOwned + Serialize>(
     }
 
     log_info(
-        *logging,
+        logging,
         format_args!("Loading config and environment variables from dotenv {path:?}"),
     );
 
@@ -281,7 +281,7 @@ fn initialize_dotenv_toml<C: DeserializeOwned + Serialize>(
     for (key, value) in table {
         let value_string = match value {
             Value::Table(_) => {
-                if key.as_str() != *config_variable_name {
+                if key.as_str() != config_variable_name {
                     return Err(Error::CannotParseTomlDotEnvFile {
                         key,
                         path: path.to_owned(),
@@ -321,10 +321,24 @@ fn initialize_dotenv_toml<C: DeserializeOwned + Serialize>(
     Ok(config)
 }
 
-fn initialize_env(
+fn initialize_env<'a>(
     logging: Logging,
-    map_env: &HashMap<String, TomlKeyPath>,
+    map_env: Vec<(&'a str, TomlKeyPath)>,
 ) -> Result<Option<Value>> {
+    if !matches!(logging, Logging::None) && !map_env.is_empty() {
+        let mut buffer = String::new();
+        buffer.push_str("\n\x1b[34m");
+        for (k, v) in &map_env {
+            if std::env::var(k).is_ok() {
+                buffer.push_str(&format!("\n{k} => {v}"));
+            }
+        }
+        buffer.push_str("\x1b[0m");
+        log_info(
+            logging,
+            format_args!("Loading config from current environment variables: {buffer}"),
+        );
+    }
     fn parse_toml_value(value: String) -> Value {
         if let Ok(value) = bool::from_str(&value) {
             return Value::Boolean(value);
@@ -365,7 +379,8 @@ fn initialize_env(
         }
     }
 
-    if map_env.is_empty() {
+    let mut map_env = map_env.into_iter().peekable();
+    if map_env.peek().is_none() {
         return Ok(None);
     }
 
@@ -373,9 +388,9 @@ fn initialize_env(
 
     let mut config = toml::Table::new();
     for (variable_name, toml_key) in map_env {
-        let value = std::env::var(&variable_name).map_err(|error| {
+        let value = std::env::var(variable_name).map_err(|error| {
             Error::ErrorReadingEnvironmentVariable {
-                name: variable_name.clone(),
+                name: (*variable_name.to_owned()).to_owned(),
                 error,
             }
         })?;
@@ -391,9 +406,15 @@ fn initialize_env(
 /// If no configuration was found, will return `None`.
 ///
 /// See [`toml-env`](crate).
-pub fn initialize<C: DeserializeOwned + Serialize>(args: Args<'_>) -> Result<Option<C>> {
+pub fn initialize<'a, M, C>(args: Args<'a, M>) -> Result<Option<C>>
+where
+    C: DeserializeOwned + Serialize,
+    M: IntoIterator<Item = (&'a str, TomlKeyPath)> + Clone,
+{
     let config_variable_name = args.config_variable_name;
     let logging = args.logging;
+    let dotenv_path = args.dotenv_path;
+    let map_env: Vec<(&'a str, TomlKeyPath)> = args.map_env.into_iter().collect();
 
     let config_env_config: Option<(Value, ConfigSource)> = match std::env::var(config_variable_name) {
         Ok(variable_value) => match toml::from_str(&variable_value) {
@@ -454,14 +475,15 @@ pub fn initialize<C: DeserializeOwned + Serialize>(args: Args<'_>) -> Result<Opt
         (config, source)
     });
 
-    let dotenv_config = initialize_dotenv_toml(&args)?.map(|config| {
-        (
-            config,
-            ConfigSource::Environment {
-                variable_names: vec![args.config_variable_name.to_owned()],
-            },
-        )
-    });
+    let dotenv_config =
+        initialize_dotenv_toml(dotenv_path, config_variable_name, logging)?.map(|config| {
+            (
+                config,
+                ConfigSource::Environment {
+                    variable_names: vec![args.config_variable_name.to_owned()],
+                },
+            )
+        });
 
     let config: Option<(Value, ConfigSource)> = match (dotenv_config, config_env_config) {
         (None, None) => None,
@@ -484,11 +506,14 @@ pub fn initialize<C: DeserializeOwned + Serialize>(args: Args<'_>) -> Result<Opt
         }
     };
 
-    let env_config = initialize_env(args.logging, &args.map_env)?.map(|value| {
+    let env_config = initialize_env(args.logging, map_env.clone())?.map(|value| {
         (
             value,
             ConfigSource::Environment {
-                variable_names: args.map_env.keys().map(ToOwned::to_owned).collect(),
+                variable_names: map_env
+                    .into_iter()
+                    .map(|(key, _)| key.to_string())
+                    .collect(),
             },
         )
     });
