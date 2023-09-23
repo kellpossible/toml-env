@@ -321,24 +321,11 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
     Ok(config)
 }
 
+/// Initialize from environment variables.
 fn initialize_env<'a>(
     logging: Logging,
     map_env: Vec<(&'a str, TomlKeyPath)>,
 ) -> Result<Option<Value>> {
-    if !matches!(logging, Logging::None) && !map_env.is_empty() {
-        let mut buffer = String::new();
-        buffer.push_str("\n\x1b[34m");
-        for (k, v) in &map_env {
-            if std::env::var(k).is_ok() {
-                buffer.push_str(&format!("\n{k} => {v}"));
-            }
-        }
-        buffer.push_str("\x1b[0m");
-        log_info(
-            logging,
-            format_args!("Loading config from current environment variables: {buffer}"),
-        );
-    }
     fn parse_toml_value(value: String) -> Value {
         if let Ok(value) = bool::from_str(&value) {
             return Value::Boolean(value);
@@ -379,21 +366,39 @@ fn initialize_env<'a>(
         }
     }
 
-    let mut map_env = map_env.into_iter().peekable();
-    if map_env.peek().is_none() {
+    if map_env.is_empty() {
         return Ok(None);
+    }
+
+    if !matches!(logging, Logging::None) {
+        let mut buffer = String::new();
+        buffer.push_str("\n\x1b[34m");
+        for (k, v) in &map_env {
+            if std::env::var(k).is_ok() {
+                buffer.push_str(&format!("\n{k} => {v}"));
+            }
+        }
+        buffer.push_str("\x1b[0m");
+        log_info(
+            logging,
+            format_args!("Loading config from current environment variables: {buffer}"),
+        );
     }
 
     log_info(logging, format_args!("Loading config from environment"));
 
     let mut config = toml::Table::new();
     for (variable_name, toml_key) in map_env {
-        let value = std::env::var(variable_name).map_err(|error| {
-            Error::ErrorReadingEnvironmentVariable {
-                name: (*variable_name.to_owned()).to_owned(),
-                error,
+        let value = match std::env::var(variable_name) {
+            Ok(value) => value,
+            Err(std::env::VarError::NotPresent) => continue,
+            Err(error) => {
+                return Err(Error::ErrorReadingEnvironmentVariable {
+                    name: (*variable_name.to_owned()).to_owned(),
+                    error,
+                })
             }
-        })?;
+        };
         let value = parse_toml_value(value);
         insert_toml_value(&mut config, &toml_key, toml_key.clone(), value);
     }

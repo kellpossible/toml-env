@@ -164,6 +164,7 @@ let config: Config = initialize(Args {
     map_env: [
         ("VALUE_1", "value_1"),
         ("VALUE_5", "child.value_5"),
+        ("VALUE_99", "does.not.exist"),
     ]
     .into_iter()
     .map(|(key, value)| {
