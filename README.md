@@ -104,6 +104,8 @@ struct Child {
 let dir = tempdir().unwrap();
 let dotenv_path = dir.path().join(".env.toml");
 let config_path = dir.path().join("config.toml");
+
+// Normally you would read this from .env.toml file
 std::fs::write(
     &dotenv_path,
     r#"
@@ -117,6 +119,9 @@ value_4=16
 )
 .unwrap();
 
+
+// Normally you may choose set this from a shell script or some
+// other source in your environment (docker file or server config file).
 std::env::set_var(
     "MY_CONFIG",
     r#"
@@ -125,6 +130,8 @@ value_2=true
 "#,
 );
 
+// Normally you would read this from config.toml 
+// (or whatever name you want) file.
 std::fs::write(
     &config_path,
     r#"
