@@ -46,21 +46,6 @@ struct ConfigChild {
 }
 ```
 
-## Environment Variable `CONFIG`
-
-You can specify the configuration by storing it in the variable name as specified using `Args::config_variable_name` (`CONFIG` by default).
-
-```bash
-# Store a multiline string into an environment variable.
-read -r -d '' CONFIG << EOM
-config_value_1="some value"
-config_value_2="some other value"
-
-[config_child]
-config_value_3="some other other value"
-EOM
-```
-
 ## `.env.toml`
 
 Initally configuration will attempted to be loaded from a file named `.env.toml` by default. You can elect to customize the name of this file. The format of this file is as follows:
@@ -80,6 +65,22 @@ config_value_3="some other other value"
 Environment variables for the application can be set using the top level keys in the file (e.g. `SECRET_ENV_VAR_1`).
 
 The configuration can be loaded from a subset of this file in `CONFIG`. The `CONFIG` key will be the name from the `Args::config_variable_name` which is `CONFIG` by default.
+
+
+## Environment Variable `CONFIG`
+
+You can specify the configuration by storing it in the variable name as specified using `Args::config_variable_name` (`CONFIG` by default).
+
+```bash
+# Store a multiline string into an environment variable.
+read -r -d '' CONFIG << EOM
+config_value_1="some value"
+config_value_2="some other value"
+
+[config_child]
+config_value_3="some other other value"
+EOM
+```
 
 ## Changelog
 
