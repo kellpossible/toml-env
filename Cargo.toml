@@ -14,3 +14,7 @@ toml = "0.8.0"
 serde-toml-merge = "0.3.2"
 thiserror = "1.0.48"
 log = { version = "0.4.20", optional = true }
+
+[dev-dependencies]
+serde = { version = "1.0.188", features = ["derive"] }
+tempfile = "3.8.0"

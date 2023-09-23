@@ -126,6 +126,15 @@ pub enum Error {
         /// Value that was unable to be parsed as `.env.toml` format
         value: toml::Value,
     },
+    /// Error parsing merged configuration.
+    #[error("Error parsing merged configuration from {source}")]
+    ErrorParsingMergedToml {
+        /// Source(s) of the configuration.
+        source: ConfigSource,
+        /// Source of the error.
+        #[source]
+        error: toml::de::Error,
+    },
     /// Error merging configurations.
     #[error("Error merging configuration {from} into {into}: {error}")]
     ErrorMerging {
@@ -210,7 +219,7 @@ fn initialize_dotenv_toml<C: DeserializeOwned + Serialize>(
 
     log_info(
         *logging,
-        format_args!("loading environment variables from {path:?}"),
+        format_args!("Loading environment variables from {path:?}"),
     );
 
     let env_str = std::fs::read_to_string(path).map_err(|error| Error::ErrorReadingFile {
@@ -272,7 +281,7 @@ pub fn initialize<C: DeserializeOwned + Serialize>(args: Args<'_>) -> Result<Opt
     let config_variable_name = args.config_variable_name;
     let logging = args.logging;
 
-    let env_config: Option<(C, ConfigSource)> = match std::env::var(config_variable_name) {
+    let env_config: Option<(toml::Value, ConfigSource)> = match std::env::var(config_variable_name) {
         Ok(variable_value) => match toml::from_str(&variable_value) {
             Ok(config) => {
                 log_info(
@@ -286,19 +295,24 @@ pub fn initialize<C: DeserializeOwned + Serialize>(args: Args<'_>) -> Result<Opt
             Err(error) => {
                 let path = Path::new(&variable_value);
                 if path.is_file() {
-                    let options_str =
+                    log_info(
+                        args.logging,
+                        format_args!("Loading environment variables from {path:?}"),
+                    );
+
+                    let config_str =
                         std::fs::read_to_string(path).map_err(|error| Error::ErrorReadingFile {
                             path: path.to_owned(),
                             error,
                         })?;
-                    let options: C = toml::from_str(&options_str).map_err(|error| {
+                    let config: toml::Value = toml::from_str(&config_str).map_err(|error| {
                         Error::ErrorParsingTomlFile {
                             path: path.to_owned(),
                             error,
                         }
                     })?;
                     log_info(logging, format_args!("Options loaded from file specified in `{config_variable_name}` environment variable: {path:?}"));
-                    Ok(Some(options))
+                    Ok(Some(config))
                 } else {
                     Err(Error::ErrorParsingEnvironmentVariableAsConfigOrFile {
                         name: config_variable_name.to_owned(),
@@ -335,71 +349,72 @@ pub fn initialize<C: DeserializeOwned + Serialize>(args: Args<'_>) -> Result<Opt
         )
     });
 
-    let env_and_dotenv_config: Option<(C, ConfigSource)> = match (dotenv_config, env_config) {
+    let env_and_dotenv_config: Option<(toml::Value, ConfigSource)> =
+        match (dotenv_config, env_config) {
+            (None, None) => None,
+            (None, Some(config)) => Some(config),
+            (Some(config), None) => Some(config),
+            (Some(from), Some(into)) => {
+                let config = serde_toml_merge::merge(into.0, from.0).map_err(|error| {
+                    Error::ErrorMerging {
+                        from: from.1.clone(),
+                        into: into.1.clone(),
+                        error,
+                    }
+                })?;
+
+                let source = ConfigSource::Merged {
+                    from: from.1.into(),
+                    into: into.1.into(),
+                };
+
+                Some((config, source))
+            }
+        };
+
+    let file_config: Option<(toml::Value, ConfigSource)> =
+        Option::transpose(args.config_path.map(|path| {
+            if path.is_file() {
+                let file_string =
+                    std::fs::read_to_string(path).map_err(|error| Error::ErrorReadingFile {
+                        path: path.to_owned(),
+                        error,
+                    })?;
+                return Ok(Some((
+                    toml::from_str(&file_string).map_err(|error| Error::ErrorParsingTomlFile {
+                        path: path.to_owned(),
+                        error,
+                    })?,
+                    ConfigSource::File(path.to_owned()),
+                )));
+            }
+            Ok(None)
+        }))?
+        .flatten();
+
+    let config = match (env_and_dotenv_config, file_config) {
         (None, None) => None,
         (None, Some(config)) => Some(config),
         (Some(config), None) => Some(config),
         (Some(from), Some(into)) => {
-            let config = C::deserialize(
-                serde_toml_merge::merge(
-                    toml::Value::try_from(from.0).unwrap(),
-                    toml::Value::try_from(into.0).unwrap(),
-                )
-                .map_err(|error| Error::ErrorMerging {
+            let config =
+                serde_toml_merge::merge(into.0, from.0).map_err(|error| Error::ErrorMerging {
                     from: from.1.clone(),
                     into: into.1.clone(),
                     error,
-                })?,
-            )
-            .expect("Expected to be able to re-deserialize config");
+                })?;
 
             let source = ConfigSource::Merged {
                 from: from.1.into(),
                 into: into.1.into(),
             };
-
             Some((config, source))
         }
     };
 
-    let file_config: Option<(C, ConfigSource)> = Option::transpose(args.config_path.map(|path| {
-        if path.is_file() {
-            let file_string =
-                std::fs::read_to_string(path).map_err(|error| Error::ErrorReadingFile {
-                    path: path.to_owned(),
-                    error,
-                })?;
-            return Ok(Some((
-                toml::from_str(&file_string).map_err(|error| Error::ErrorParsingTomlFile {
-                    path: path.to_owned(),
-                    error,
-                })?,
-                ConfigSource::File(path.to_owned()),
-            )));
-        }
-        Ok(None)
-    }))?
-    .flatten();
-
-    let config = match (env_and_dotenv_config, file_config) {
-        (None, None) => None,
-        (None, Some(config)) => Some(config.0),
-        (Some(config), None) => Some(config.0),
-        (Some(from), Some(into)) => Some(
-            C::deserialize(
-                serde_toml_merge::merge(
-                    toml::Value::try_from(from.0).unwrap(),
-                    toml::Value::try_from(into.0).unwrap(),
-                )
-                .map_err(|error| Error::ErrorMerging {
-                    from: from.1,
-                    into: into.1,
-                    error,
-                })?,
-            )
-            .expect("Expected to be able to re-deserialize config"),
-        ),
-    };
+    let config = Option::transpose(config.map(|(config, source)| {
+        C::deserialize(config).map_err(|error| Error::ErrorParsingMergedToml { source, error })
+    }))?;
 
     if !matches!((logging, &config), (Logging::None, None)) {
         let config_string = toml::to_string_pretty(&config)
