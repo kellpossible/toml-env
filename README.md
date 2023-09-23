@@ -72,7 +72,7 @@ The configuration can be loaded from a subset of this file in `CONFIG`. The `CON
 You can specify the configuration by storing it in the variable name as specified using `Args::config_variable_name` (`CONFIG` by default).
 
 ```bash
-# Store a multiline string into an environment variable.
+# Store a multiline string into an environment variable in bash shell.
 read -r -d '' CONFIG << EOM
 config_value_1="some value"
 config_value_2="some other value"
