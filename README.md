@@ -82,6 +82,74 @@ config_value_3="some other other value"
 EOM
 ```
 
+## Example
+
+```rust
+use serde::{Deserialize, Serialize};
+use tempfile::tempdir;
+use toml_env::{Args, initialize, Logging};
+
+#[derive(Serialize, Deserialize)]
+struct Config {
+    value_1: String,
+    value_2: bool,
+    child: Child,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct Child {
+    value_3: i32,
+    value_4: u8,
+}
+let dir = tempdir().unwrap();
+let dotenv_path = dir.path().join(".env.toml");
+let config_path = dir.path().join("config.toml");
+std::fs::write(
+    &dotenv_path,
+    r#"
+SECRET="hello-world"
+[MY_CONFIG]
+value_1="Something from .env.toml"
+[MY_CONFIG.child]
+value_3=-5
+value_4=16
+"#,
+)
+.unwrap();
+
+std::env::set_var(
+    "MY_CONFIG",
+    r#"
+value_1="Something from MY_CONFIG environment"
+value_2=true
+"#,
+);
+
+std::fs::write(
+    &config_path,
+    r#"
+value_1="Something from config.toml"
+value_2=false
+value_4=45
+"#,
+)
+.unwrap();
+
+let config: Config = initialize(Args {
+    dotenv_path: &dotenv_path,
+    config_path: Some(&config_path),
+    config_variable_name: "MY_CONFIG",
+    logging: Logging::StdOut,
+})
+.unwrap()
+.unwrap();
+
+assert_eq!(config.value_1, "Something from .env.toml");
+assert_eq!(config.value_2, true);
+assert_eq!(config.child.value_3, -5);
+assert_eq!(config.child.value_4, 16);
+```
+
 ## Changelog
 
 See [CHANGELOG.md](https://github.com/kellpossible/toml-env/blob/master/CHANGELOG.md) for an account of changes to this library.
