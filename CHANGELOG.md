@@ -1,5 +1,11 @@
 # Changelog for `toml-env`
 
+## `main` Branch
+
+### Documentation
+
+- Add badges to README.
+
 ## v1.0.0
 
 ### Notes
