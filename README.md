@@ -6,27 +6,28 @@ This library is designed to load a configuration for an application at startup u
 
 1. From a dotenv style file `.env.toml` (a file name of your choosing)
 2. From an environment variable `CONFIG` (or a variable name of your choosing).
-3. From a configuration file.
+3. From mapped environments (e.g. `MY_VARIABLE => my_variable.child`).
+4. From a configuration file.
 
 ## Why yet another config library?
 
 Here are some possible alternatives to this library:
 
-+ [`config`](https://crates.io/crates/config/) You want maximum flexibility.
-+ [`figment`](https://crates.io/crates/figment) You want maximum flexibility.
-+ [`just-config`](https://crates.io/crates/justconfig/) You want maximum flexibility.
-+ [`dotenvy`](https://crates.io/crates/dotenvy) You just want `.env` support.
-+ [`env_inventory`](https://crates.io/crates/env-inventory/) You just want environment variable configuration file support.
+- [`config`](https://crates.io/crates/config/) You want maximum flexibility.
+- [`figment`](https://crates.io/crates/figment) You want maximum flexibility.
+- [`just-config`](https://crates.io/crates/justconfig/) You want maximum flexibility.
+- [`dotenvy`](https://crates.io/crates/dotenvy) You just want `.env` support.
+- [`env_inventory`](https://crates.io/crates/env-inventory/) You just want environment variable configuration file support.
 
 Why would you use this one?
 
-+ Small feature set.
-+ Minimal dependencies.
-+ Opinionated defaults.
-+ `.env` using `TOML` which is a more established file format standard.
-+ Loading config from TOML stored in a multiline environment variable.
-  + For large configurations with nested maps, this could be seen as a bit more legible than `MY_VARIABLE__SOMETHING_ELSE__SOMETHING_SOMETHING_ELSE`.
-  + You can also just copy text from a TOML file to use in the environment variable instead of translating it into complicated names of variables.
+- Small feature set.
+- Minimal dependencies.
+- Opinionated defaults.
+- `.env` using `TOML` which is a more established file format standard.
+- Loading config from TOML stored in a multiline environment variable.
+  - For large configurations with nested maps, this could be seen as a bit more legible than `MY_VARIABLE__SOMETHING_ELSE__SOMETHING_SOMETHING_ELSE`.
+  - You can also just copy text from a TOML file to use in the environment variable instead of translating it into complicated names of variables.
 
 ## Config Struct
 
@@ -66,7 +67,6 @@ Environment variables for the application can be set using the top level keys in
 
 The configuration can be loaded from a subset of this file in `CONFIG`. The `CONFIG` key will be the name from the `Args::config_variable_name` which is `CONFIG` by default.
 
-
 ## Environment Variable `CONFIG`
 
 You can specify the configuration by storing it in the variable name as specified using `Args::config_variable_name` (`CONFIG` by default).
@@ -102,6 +102,7 @@ struct Config {
 struct Child {
     value_3: i32,
     value_4: u8,
+    value_5: String,
 }
 
 let dir = tempdir().unwrap();
@@ -122,7 +123,6 @@ value_4=16
 )
 .unwrap();
 
-
 // Normally you may choose set this from a shell script or some
 // other source in your environment (docker file or server config file).
 std::env::set_var(
@@ -133,7 +133,12 @@ value_2=true
 "#,
 );
 
-// Normally you would read this from config.toml 
+std::env::set_var(
+    "VALUE_5",
+    "Something from Environment"
+);
+
+// Normally you would read this from config.toml
 // (or whatever name you want) file.
 std::fs::write(
     &config_path,
@@ -151,6 +156,14 @@ let config: Config = initialize(Args {
     config_path: Some(&config_path),
     config_variable_name: "MY_CONFIG",
     logging: Logging::StdOut,
+    map_env: {
+        let mut map = std::collections::HashMap::new();
+        map.insert(
+            "VALUE_5".to_owned(),
+            "child.value_5".parse().unwrap()
+        );
+        map
+    }
 })
 .unwrap()
 .unwrap();
