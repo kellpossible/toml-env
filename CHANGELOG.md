@@ -1,5 +1,24 @@
 # Changelog for `toml-env`
 
+## v1.0.0
+
+### Notes
+
+I consider this library to be feature complete now! It will be version `1.0.0` in order to prevent future scope creep temptations. It already has a lot of functionality with a surprisingly small amount of code.
+
+### New Features
+
+- Add ability to map variables from environment in an automatic fashion, similar to other libraries.
+- Improved README with many more examples.
+
+### Bug Fixes
+
+- Fixed some corner cases with order of operations.
+
+### Breaking
+
+- Change `Args::map_env` to a hashmap, better API and simpler code.
+
 ## v0.3.5
 
 ### Bug Fixes

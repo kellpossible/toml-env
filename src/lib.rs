@@ -1,7 +1,11 @@
 #![doc = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))]
 #![deny(missing_docs)]
 
+// NOTE: This crate intentionally uses a single module in order to put pressure on keeping the
+// feature list small.
+
 use std::{
+    borrow::Cow,
     collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
@@ -10,6 +14,20 @@ use std::{
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 use toml::Value;
+
+/// Convenience type shorthand for `Result<T, InnerError>`.
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// Default name for attempting to load the configuration (and environment variables) from a file.
+pub const DEFAULT_DOTENV_PATH: &str = ".env.toml";
+
+/// Default environment variable name to use for loading configuration from. Also the same name
+/// used for the table of the configuration within the `.env.toml`.
+pub const DEFAULT_CONFIG_VARIABLE_NAME: &str = "CONFIG";
+
+/// The default divider between different levels of parent.child in environment variable names.
+/// This will be replaced with a `.` for the [`TomlKeyPath`].
+pub const DEFAULT_MAP_ENV_DIVIDER: &str = "__";
 
 /// A source of configuration.
 #[derive(Debug, Clone)]
@@ -48,8 +66,13 @@ impl std::fmt::Display for ConfigSource {
 
 /// An error that occurs while initializing configuration.
 #[derive(Debug, Error)]
+#[error(transparent)]
+pub struct Error(#[from] InnerError);
+
+/// An error that occurs while initializing configuration.
+#[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum Error {
+enum InnerError {
     /// Error reading environment variable.
     #[error("Error reading {name} environment variable")]
     ErrorReadingEnvironmentVariable {
@@ -58,12 +81,6 @@ pub enum Error {
         /// Source of the error.
         #[source]
         error: std::env::VarError,
-    },
-    /// Error parsing an environment variable as valid TOML.
-    #[error("Error parsing {name} environment variable as valid TOML")]
-    ErrorParsingEnvironmentVariableAsToml {
-        /// Name of the environment variable.
-        name: String,
     },
     /// Error reading TOML file.
     #[error("Error reading TOML file {path:?}")]
@@ -81,7 +98,7 @@ pub enum Error {
         path: PathBuf,
         /// Source of the error.
         #[source]
-        error: toml::de::Error,
+        error: Box<toml::de::Error>,
     },
     /// Cannot parse a table in the `.toml.env` file.
     #[error("Cannot parse {key} as environment variable in {path:?}. Advice: {advice}")]
@@ -102,18 +119,7 @@ pub enum Error {
         path: PathBuf,
         /// Source of the error.
         #[source]
-        error: toml::de::Error,
-    },
-    /// Error parsing an environment variable as the config.
-    #[error("Error parsing environment variable ({name}={value:?}) as the config.")]
-    ErrorParsingEnvironmentVariableAsConfig {
-        /// Name of the environment variable.
-        name: String,
-        /// Value of the environment variable.
-        value: String,
-        /// Source of the error.
-        #[source]
-        error: toml::de::Error,
+        error: Box<toml::de::Error>,
     },
     /// Either there was an error parsing the environment variable as the config, or if the value
     /// is a filename, it does not exist.
@@ -127,7 +133,7 @@ pub enum Error {
         value: String,
         /// Source of the error.
         #[source]
-        error: toml::de::Error,
+        error: Box<toml::de::Error>,
     },
     /// Error parsing file as `.env.toml` format.
     #[error(
@@ -146,7 +152,7 @@ pub enum Error {
         source: ConfigSource,
         /// Source of the error.
         #[source]
-        error: toml::de::Error,
+        error: Box<toml::de::Error>,
     },
     /// Error merging configurations.
     #[error("Error merging configuration {from} into {into}: {error}")]
@@ -158,20 +164,7 @@ pub enum Error {
         /// Source of the error.
         error: serde_toml_merge::Error,
     },
-    /// Invalid TOML key.
-    #[error("Invalid TOML key {0}. Expected something resembling a json pointer. e.g. `key` or `key_one.child`")]
-    InvalidTomlKey(String),
 }
-
-/// Convenience type shorthand for `Result<T, Error>`.
-pub type Result<T> = std::result::Result<T, Error>;
-
-/// Default name for attempting to load the configuration (and environment variables) from a file.
-pub const DEFAULT_DOTENV_PATH: &str = ".env.toml";
-
-/// Default environment variable name to use for loading configuration from. Also the same name
-/// used for the table of the configuration within the `.env.toml`.
-pub const DEFAULT_CONFIG_VARIABLE_NAME: &str = "CONFIG";
 
 /// What method of logging for this library to use.
 #[derive(Default, Clone, Copy)]
@@ -179,7 +172,9 @@ pub enum Logging {
     /// Don't perform any logging
     #[default]
     None,
-    /// Use STDOUT for logging.
+    /// Use STDOUT for logging. This may be attractive if you are relying on the output of this
+    /// library to configure your logging system and still want to see what's going on here before
+    /// the system is configured.
     StdOut,
     /// Use the [`log`] crate for logging.
     #[cfg(feature = "log")]
@@ -204,8 +199,30 @@ impl FromStr for TomlKeyPath {
     }
 }
 
+/// Args for automatically mapping environment variables into the config.
+pub struct AutoMapEnvArgs<'a> {
+    /// The divider that separates different levels of the parent.child relationship for the
+    /// mapping. This will get replaced with `.` when converting the name of a variable to a [`TomlKeyPath`]. The default value is [`DEFAULT_DOTENV_PATH`].
+    pub divider: &'a str,
+    /// Prefix for environment variables to be mapped. By default this will be [`DEFAULT_CONFIG_VARIABLE_NAME`].
+    pub prefix: Option<&'a str>,
+    /// A transform operation to perform on the environment variable before parsing it. By default
+    /// this transforms it to lowercase.
+    pub transform: Box<dyn Fn(&str) -> String>,
+}
+
+impl Default for AutoMapEnvArgs<'_> {
+    fn default() -> Self {
+        Self {
+            divider: DEFAULT_MAP_ENV_DIVIDER,
+            prefix: None,
+            transform: Box::new(|name| name.to_lowercase()),
+        }
+    }
+}
+
 /// Args as input to [`initialize()`].
-pub struct Args<'a, M = HashMap<&'a str, TomlKeyPath>> {
+pub struct Args<'a> {
     /// Path to `.env.toml` format file. The value is [`DEFAULT_DOTENV_PATH`] by default.
     pub dotenv_path: &'a Path,
     /// Path to a config file to load.
@@ -215,20 +232,20 @@ pub struct Args<'a, M = HashMap<&'a str, TomlKeyPath>> {
     /// What method of logging to use (if any). [`Logging::None`] by default.
     pub logging: Logging,
     /// Map the specified environment variables into config keys.
-    pub map_env: M,
+    pub map_env: HashMap<&'a str, TomlKeyPath>,
+    /// Automatically map environment variables into config.
+    pub auto_map_env: Option<AutoMapEnvArgs<'a>>,
 }
 
-impl<M> Default for Args<'static, M>
-where
-    M: Default,
-{
+impl Default for Args<'static> {
     fn default() -> Self {
         Self {
             dotenv_path: Path::new(DEFAULT_DOTENV_PATH),
             config_path: None,
             config_variable_name: DEFAULT_CONFIG_VARIABLE_NAME,
             logging: Logging::default(),
-            map_env: M::default(),
+            map_env: HashMap::default(),
+            auto_map_env: None,
         }
     }
 }
@@ -248,7 +265,7 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
     dotenv_path: &'a Path,
     config_variable_name: &'a str,
     logging: Logging,
-) -> Result<Option<C>> {
+) -> std::result::Result<Option<C>, InnerError> {
     let path = Path::new(dotenv_path);
     if !path.exists() {
         return Ok(None);
@@ -259,18 +276,19 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
         format_args!("Loading config and environment variables from dotenv {path:?}"),
     );
 
-    let env_str = std::fs::read_to_string(path).map_err(|error| Error::ErrorReadingFile {
+    let env_str = std::fs::read_to_string(path).map_err(|error| InnerError::ErrorReadingFile {
         path: path.to_owned(),
         error,
     })?;
-    let env: Value = toml::from_str(&env_str).map_err(|error| Error::ErrorParsingTomlFile {
-        path: path.to_owned(),
-        error,
-    })?;
+    let env: Value =
+        toml::from_str(&env_str).map_err(|error| InnerError::ErrorParsingTomlFile {
+            path: path.to_owned(),
+            error: error.into(),
+        })?;
     let table: toml::value::Table = match env {
         Value::Table(table) => table,
         unexpected => {
-            return Err(Error::UnexpectedTomlDotEnvFileFormat {
+            return Err(InnerError::UnexpectedTomlDotEnvFileFormat {
                 path: path.to_owned(),
                 value: unexpected,
             });
@@ -287,7 +305,7 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
         let value_string = match value {
             Value::Table(_) => {
                 if key.as_str() != config_variable_name {
-                    return Err(Error::CannotParseTomlDotEnvFile {
+                    return Err(InnerError::CannotParseTomlDotEnvFile {
                         key,
                         path: path.to_owned(),
                         advice: format!("Only a table with {config_variable_name} is allowed in a .toml.env format file."),
@@ -296,10 +314,10 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
                 match C::deserialize(value.clone()) {
                     Ok(c) => config = Some(c),
                     Err(error) => {
-                        return Err(Error::ErrorParsingTomlDotEnvFileKey {
+                        return Err(InnerError::ErrorParsingTomlDotEnvFileKey {
                             name: key,
                             path: path.to_owned(),
-                            error,
+                            error: error.into(),
                         })
                     }
                 }
@@ -311,7 +329,7 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
             Value::Boolean(value) => Some(value.to_string()),
             Value::Datetime(value) => Some(value.to_string()),
             Value::Array(value) => {
-                return Err(Error::CannotParseTomlDotEnvFile {
+                return Err(InnerError::CannotParseTomlDotEnvFile {
                     key,
                     path: path.to_owned(),
                     advice: format!("Array values are not supported: {value:?}"),
@@ -336,10 +354,12 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
 }
 
 /// Initialize from environment variables.
-fn initialize_env<'a>(
+fn initialize_env(
     logging: Logging,
-    map_env: Vec<(&'a str, TomlKeyPath)>,
-) -> Result<Option<Value>> {
+    map_env: HashMap<&'_ str, TomlKeyPath>,
+    auto_args: Option<AutoMapEnvArgs<'_>>,
+    config_variable_name: &'_ str,
+) -> std::result::Result<Option<Value>, InnerError> {
     fn parse_toml_value(value: String) -> Value {
         if let Ok(value) = bool::from_str(&value) {
             return Value::Boolean(value);
@@ -356,12 +376,7 @@ fn initialize_env<'a>(
 
         Value::String(value)
     }
-    fn insert_toml_value(
-        table: &mut toml::Table,
-        full_key: &TomlKeyPath,
-        mut key: TomlKeyPath,
-        value: Value,
-    ) {
+    fn insert_toml_value(table: &mut toml::Table, mut key: TomlKeyPath, value: Value) {
         if key.0.is_empty() {
             return;
         }
@@ -376,7 +391,40 @@ fn initialize_env<'a>(
                 .or_insert(toml::Table::new().into())
                 .as_table_mut()
                 .expect("Expected table");
-            return insert_toml_value(table, full_key, key, value);
+            insert_toml_value(table, key, value)
+        }
+    }
+
+    let mut map_env: HashMap<Cow<'_, str>, TomlKeyPath> = map_env
+        .into_iter()
+        .map(|(key, value)| (Cow::Borrowed(key), value))
+        .collect();
+
+    if let Some(auto_args) = auto_args {
+        let mut prefix = auto_args.prefix.unwrap_or(config_variable_name).to_owned();
+        prefix.push_str(auto_args.divider);
+        for (key, _) in std::env::vars_os() {
+            let key = if let Some(key) = key.to_str() {
+                key.to_owned()
+            } else {
+                continue;
+            };
+
+            let key_without_prefix: &str = if let Some(0) = key.find(&prefix) {
+                key.split_at(prefix.len()).1
+            } else {
+                continue;
+            };
+
+            let key_transformed = (auto_args.transform)(key_without_prefix);
+            let toml_key: TomlKeyPath =
+                if let Ok(key) = key_transformed.replace(auto_args.divider, ".").parse() {
+                    key
+                } else {
+                    continue;
+                };
+
+            map_env.entry(key.into()).or_insert(toml_key);
         }
     }
 
@@ -388,7 +436,7 @@ fn initialize_env<'a>(
         let mut buffer = String::new();
         buffer.push_str("\x1b[34m");
         for (k, v) in &map_env {
-            if std::env::var(k).is_ok() {
+            if std::env::var(k.as_ref()).is_ok() {
                 buffer.push_str(&format!("\n{k} => {v}"));
             }
         }
@@ -403,18 +451,18 @@ fn initialize_env<'a>(
 
     let mut config = toml::Table::new();
     for (variable_name, toml_key) in map_env {
-        let value = match std::env::var(variable_name) {
+        let value = match std::env::var(variable_name.as_ref()) {
             Ok(value) => value,
             Err(std::env::VarError::NotPresent) => continue,
             Err(error) => {
-                return Err(Error::ErrorReadingEnvironmentVariable {
-                    name: (*variable_name.to_owned()).to_owned(),
+                return Err(InnerError::ErrorReadingEnvironmentVariable {
+                    name: (*variable_name.into_owned()).to_owned(),
                     error,
                 })
             }
         };
         let value = parse_toml_value(value);
-        insert_toml_value(&mut config, &toml_key, toml_key.clone(), value);
+        insert_toml_value(&mut config, toml_key.clone(), value);
     }
 
     Ok(Some(config.into()))
@@ -425,15 +473,13 @@ fn initialize_env<'a>(
 /// If no configuration was found, will return `None`.
 ///
 /// See [`toml-env`](crate).
-pub fn initialize<'a, M, C>(args: Args<'a, M>) -> Result<Option<C>>
+pub fn initialize<C>(args: Args<'_>) -> Result<Option<C>>
 where
     C: DeserializeOwned + Serialize,
-    M: IntoIterator<Item = (&'a str, TomlKeyPath)> + Clone,
 {
     let config_variable_name = args.config_variable_name;
     let logging = args.logging;
     let dotenv_path = args.dotenv_path;
-    let map_env: Vec<(&'a str, TomlKeyPath)> = args.map_env.into_iter().collect();
 
     let config_env_config: Option<(Value, ConfigSource)> = match std::env::var(config_variable_name) {
         Ok(variable_value) => match toml::from_str(&variable_value) {
@@ -455,23 +501,23 @@ where
                     );
 
                     let config_str =
-                        std::fs::read_to_string(path).map_err(|error| Error::ErrorReadingFile {
+                        std::fs::read_to_string(path).map_err(|error| InnerError::ErrorReadingFile {
                             path: path.to_owned(),
                             error,
                         })?;
                     let config: Value = toml::from_str(&config_str).map_err(|error| {
-                        Error::ErrorParsingTomlFile {
+                        InnerError::ErrorParsingTomlFile {
                             path: path.to_owned(),
-                            error,
+                            error: error.into(),
                         }
                     })?;
                     log_info(logging, format_args!("Options loaded from file specified in `{config_variable_name}` environment variable: {path:?}"));
                     Ok(Some(config))
                 } else {
-                    Err(Error::ErrorParsingEnvironmentVariableAsConfigOrFile {
+                    Err(InnerError::ErrorParsingEnvironmentVariableAsConfigOrFile {
                         name: config_variable_name.to_owned(),
                         value: variable_value,
-                        error,
+                        error: error.into(),
                     })
                 }
             }
@@ -485,7 +531,7 @@ where
             );
             Ok(None)
         }
-        Err(error) => Err(Error::ErrorReadingEnvironmentVariable {
+        Err(error) => Err(InnerError::ErrorReadingEnvironmentVariable {
             name: config_variable_name.to_owned(),
             error,
         }),
@@ -493,6 +539,8 @@ where
         let source = ConfigSource::DotEnv(args.dotenv_path.to_owned());
         (config, source)
     });
+
+    println!("about to initialize dotenv");
 
     let dotenv_config =
         initialize_dotenv_toml(dotenv_path, config_variable_name, logging)?.map(|config| {
@@ -509,12 +557,13 @@ where
         (None, Some(config)) => Some(config),
         (Some(config), None) => Some(config),
         (Some(from), Some(into)) => {
-            let config =
-                serde_toml_merge::merge(into.0, from.0).map_err(|error| Error::ErrorMerging {
+            let config = serde_toml_merge::merge(into.0, from.0).map_err(|error| {
+                InnerError::ErrorMerging {
                     from: from.1.clone(),
                     into: into.1.clone(),
                     error,
-                })?;
+                }
+            })?;
 
             let source = ConfigSource::Merged {
                 from: from.1.into(),
@@ -525,14 +574,17 @@ where
         }
     };
 
-    let env_config = initialize_env(args.logging, map_env.clone())?.map(|value| {
+    let env_config = initialize_env(
+        args.logging,
+        args.map_env.clone(),
+        args.auto_map_env,
+        config_variable_name,
+    )?
+    .map(|value| {
         (
             value,
             ConfigSource::Environment {
-                variable_names: map_env
-                    .into_iter()
-                    .map(|(key, _)| key.to_string())
-                    .collect(),
+                variable_names: args.map_env.keys().map(|key| (*key).to_owned()).collect(),
             },
         )
     });
@@ -542,12 +594,13 @@ where
         (None, Some(config)) => Some(config),
         (Some(config), None) => Some(config),
         (Some(from), Some(into)) => {
-            let config =
-                serde_toml_merge::merge(into.0, from.0).map_err(|error| Error::ErrorMerging {
+            let config = serde_toml_merge::merge(into.0, from.0).map_err(|error| {
+                InnerError::ErrorMerging {
                     from: from.1.clone(),
                     into: into.1.clone(),
                     error,
-                })?;
+                }
+            })?;
 
             let source = ConfigSource::Merged {
                 from: from.1.into(),
@@ -560,15 +613,18 @@ where
     let file_config: Option<(Value, ConfigSource)> =
         Option::transpose(args.config_path.map(|path| {
             if path.is_file() {
-                let file_string =
-                    std::fs::read_to_string(path).map_err(|error| Error::ErrorReadingFile {
+                let file_string = std::fs::read_to_string(path).map_err(|error| {
+                    InnerError::ErrorReadingFile {
                         path: path.to_owned(),
                         error,
-                    })?;
-                return Ok(Some((
-                    toml::from_str(&file_string).map_err(|error| Error::ErrorParsingTomlFile {
-                        path: path.to_owned(),
-                        error,
+                    }
+                })?;
+                return Result::Ok(Some((
+                    toml::from_str(&file_string).map_err(|error| {
+                        InnerError::ErrorParsingTomlFile {
+                            path: path.to_owned(),
+                            error: error.into(),
+                        }
                     })?,
                     ConfigSource::File(path.to_owned()),
                 )));
@@ -582,12 +638,13 @@ where
         (None, Some(config)) => Some(config),
         (Some(config), None) => Some(config),
         (Some(from), Some(into)) => {
-            let config =
-                serde_toml_merge::merge(into.0, from.0).map_err(|error| Error::ErrorMerging {
+            let config = serde_toml_merge::merge(into.0, from.0).map_err(|error| {
+                InnerError::ErrorMerging {
                     from: from.1.clone(),
                     into: into.1.clone(),
                     error,
-                })?;
+                }
+            })?;
 
             let source = ConfigSource::Merged {
                 from: from.1.into(),
@@ -598,16 +655,22 @@ where
     };
 
     let config = Option::transpose(config.map(|(config, source)| {
-        C::deserialize(config).map_err(|error| Error::ErrorParsingMergedToml { source, error })
+        C::deserialize(config).map_err(|error| InnerError::ErrorParsingMergedToml {
+            source,
+            error: error.into(),
+        })
     }))?;
 
-    if !matches!((logging, &config), (Logging::None, None)) {
-        let config_string = toml::to_string_pretty(&config)
-            .expect("Expected to be able to re-serialize config toml");
-        log_info(
-            logging,
-            format_args!("Parsed configuration:\n\x1b[34m{config_string}\x1b[0m"),
-        );
+    match (logging, config.as_ref()) {
+        (_, Some(config)) => {
+            let config_string = toml::to_string_pretty(&config)
+                .expect("Expected to be able to re-serialize config toml");
+            log_info(
+                logging,
+                format_args!("Parsed configuration:\n\x1b[34m{config_string}\x1b[0m"),
+            );
+        }
+        (Logging::None, _) | (_, None) => {}
     }
 
     Ok(config)

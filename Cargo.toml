@@ -1,9 +1,11 @@
 [package]
 name = "toml-env"
-version = "0.3.5"
+version = "1.0.0"
 edition = "2021"
 authors = ["Luke Frisken <l.frisken@gmail.com>"]
 description = "A simple configuration library using TOML"
+categories = ["config"]
+keywords = ["configuration", "environment", "env", "dotenv", "toml"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/kellpossible/toml-env"
@@ -16,5 +18,6 @@ thiserror = "1.0.48"
 log = { version = "0.4.20", optional = true }
 
 [dev-dependencies]
+anyhow = "1.0.75"
 serde = { version = "1.0.188", features = ["derive"] }
 tempfile = "3.8.0"

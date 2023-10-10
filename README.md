@@ -21,10 +21,11 @@ Here are some possible alternatives to this library:
 
 Why would you use this one?
 
-- Small feature set.
+- Small opinionated feature set.
 - Minimal dependencies.
-- Opinionated defaults.
 - `.env` using `TOML` which is a more established file format standard.
+- Loading config from environment variables using custom mappings into the configuration (`MY_VARIABLE => child.child.config`) in a json pointer style (full syntax is not supported).
+- Loading config from environment variables using automatic mappings, which are configurable. (`MY_APP__PARENT__CHILD => parent.child`)
 - Loading config from TOML stored in a multiline environment variable.
   - For large configurations with nested maps, this could be seen as a bit more legible than `MY_VARIABLE__SOMETHING_ELSE__SOMETHING_SOMETHING_ELSE`.
   - You can also just copy text from a TOML file to use in the environment variable instead of translating it into complicated names of variables.
@@ -84,10 +85,161 @@ EOM
 
 ## Example
 
+### `CONFIG` Variable
+
+A simple example loading configuration from `CONFIG`, using the default settings.
+
+```rust
+use serde::{Deserialize, Serialize};
+use toml_env::{initialize, Args};
+
+#[derive(Serialize, Deserialize)]
+struct Config {
+    value_1: String,
+    value_2: bool,
+}
+
+// Normally you may choose set this from a shell script or some
+// other source in your environment (docker file or server config file).
+std::env::set_var(
+    "CONFIG",
+    r#"
+value_1="Something from CONFIG environment"
+value_2=true
+"#,
+);
+
+let config: Config = initialize(Args::default())
+    .unwrap()
+    .unwrap();
+
+assert_eq!(config.value_1, "Something from CONFIG environment");
+assert_eq!(config.value_2, true);
+```
+
+### Custom Variable Mappings
+
+A simple demonstration of the custom environment variable mappings:
+
+```rust
+use serde::{Deserialize, Serialize};
+use toml_env::{Args, initialize, TomlKeyPath};
+use std::str::FromStr;
+
+#[derive(Serialize, Deserialize)]
+struct Config {
+    value_1: String,
+    value_2: bool,
+}
+
+// Normally you may choose set this from a shell script or some
+// other source in your environment (docker file or server config file).
+std::env::set_var("VALUE_1", "Hello World");
+std::env::set_var("VALUE_2", "true");
+
+let config: Config = initialize(Args {
+    map_env: [
+        ("VALUE_1", "value_1"),
+        ("VALUE_2", "value_2"),
+    ]
+    .into_iter()
+    .map(|(key, value)| {
+        (key, TomlKeyPath::from_str(value).unwrap())
+    }).collect(),
+    ..Args::default()
+})
+    .unwrap()
+    .unwrap();
+
+assert_eq!(config.value_1, "Hello World");
+assert_eq!(config.value_2, true);
+```
+
+### Automatic Variable Mappings
+
+A simple demonstration of the automatic environment variable mappings:
+
+```rust
+use serde::{Deserialize, Serialize};
+use toml_env::{Args, initialize, AutoMapEnvArgs};
+
+// NOTE: the `deny_unknown_fields` can be used to reject
+// mappings which don't conform to the current spec.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Config {
+    value_1: String,
+    value_2: bool,
+}
+
+// Normally you may choose set this from a shell script or some
+// other source in your environment (docker file or server config file).
+std::env::set_var("CONFIG__VALUE_1", "Hello World");
+std::env::set_var("CONFIG__VALUE_2", "true");
+
+let config: Config = initialize(Args {
+    auto_map_env: Some(AutoMapEnvArgs::default()),
+    // The default prefix is CONFIG.
+    // In practice you would usually use a custom prefix:
+    // prefix: Some("MY_APP"),
+    ..Args::default()
+})
+    .unwrap()
+    .unwrap();
+
+assert_eq!(config.value_1, "Hello World");
+assert_eq!(config.value_2, true);
+```
+
+### `.env.toml` File
+
+A simple example loading configuration and environment variables from `.env.toml`, using the default settings.
+
+```rust
+use serde::{Deserialize, Serialize};
+use toml_env::{Args, initialize};
+
+#[derive(Serialize, Deserialize)]
+struct Config {
+    value_1: String,
+    value_2: bool,
+}
+
+let dir = tempfile::tempdir().unwrap();
+std::env::set_current_dir(&dir).unwrap();
+let dotenv_path = dir.path().join(".env.toml");
+
+// Normally you would read this from .env.toml file
+std::fs::write(
+    &dotenv_path,
+    r#"
+OTHER_VARIABLE="hello-world"
+[CONFIG]
+value_1="Something from .env.toml"
+value_2=true
+"#,
+)
+.unwrap();
+
+let config: Config = initialize(Args::default())
+    .unwrap()
+    .unwrap();
+
+assert_eq!(config.value_1, "Something from .env.toml");
+assert_eq!(config.value_2, true);
+
+let secret = std::env::var("OTHER_VARIABLE").unwrap();
+assert_eq!(secret, "hello-world");
+```
+
+### All Features
+
+A more complex example demonstrating all the features.
+
 ```rust
 use serde::{Deserialize, Serialize};
 use tempfile::tempdir;
-use toml_env::{Args, initialize, Logging, TomlKeyPath};
+use toml_env::{Args, initialize, Logging, TomlKeyPath, AutoMapEnvArgs};
 use std::str::FromStr;
 
 #[derive(Serialize, Deserialize)]
@@ -104,6 +256,7 @@ struct Child {
     value_3: i32,
     value_4: u8,
     value_5: String,
+    value_6: String,
 }
 
 let dir = tempdir().unwrap();
@@ -142,6 +295,10 @@ std::env::set_var(
     "VALUE_5",
     "Something from Environment"
 );
+std::env::set_var(
+    "MY_APP__CHILD__VALUE_6",
+    "Something from Environment"
+);
 
 // Normally you would read this from config.toml
 // (or whatever name you want) file.
@@ -169,10 +326,15 @@ let config: Config = initialize(Args {
     .into_iter()
     .map(|(key, value)| {
         (key, TomlKeyPath::from_str(value).unwrap())
+    }).collect(),
+    auto_map_env: Some(AutoMapEnvArgs {
+        divider: "__",
+        prefix: Some("MY_APP"),
+        transform: Box::new(|name| name.to_lowercase()),
     })
 })
-.unwrap()
-.unwrap();
+    .unwrap()
+    .unwrap();
 
 assert_eq!(config.value_1, "Something from .env.toml");
 assert_eq!(config.value_2, true);
