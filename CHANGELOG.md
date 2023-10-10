@@ -1,11 +1,16 @@
 # Changelog for `toml-env`
 
-## `main` Branch
+## v1.1.0
 
 ### Documentation
 
 - Add badges to README.
 - Fix type code comment for `Result`.
+- Improved docs for `TomlKeyPath`.
+
+### New Features
+
+- New `TomlKeyPath::resolve()` function to demonstrate the type's purpose and functionality within the library (plus it might be useful for someone).
 
 ## v1.0.0
 

@@ -164,6 +164,12 @@ enum InnerError {
         /// Source of the error.
         error: serde_toml_merge::Error,
     },
+    /// Unable to parse [`TomlKeyPath`].
+    #[error("Unable to parse path {path:?} into TomlKeyPath")]
+    UnableToParseTomlKeyPath {
+        /// Path that could not be parsed.
+        path: String,
+    },
 }
 
 /// What method of logging for this library to use.
@@ -181,9 +187,64 @@ pub enum Logging {
     Log,
 }
 
-/// A path to a key into a [`toml::Value`].
+/// A path to a key into a [`toml::Value`]. In the format of `key.key.key` when parsed using
+/// [`FromStr`].
+///
+/// See [`TomlKeyPath::resolve()`] for an example.
 #[derive(Debug, Clone)]
 pub struct TomlKeyPath(Vec<String>);
+
+impl TomlKeyPath {
+    /// Resolve a value contained within a [`toml::Value`] using this [`TomlKeyPath`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use toml_env::TomlKeyPath;
+    /// use toml;
+    ///
+    /// let toml_value = toml::from_str(r#"
+    /// key="value1"
+    /// [child]
+    /// key="value2"
+    /// "#).unwrap();
+    ///
+    /// let key1: TomlKeyPath = "key".parse()
+    ///     .expect("Expected to parse successfully");
+    /// let key1_value = key1.resolve(&toml_value)
+    ///     .expect("Expected to resolve")
+    ///     .as_str()
+    ///     .expect("Expected to be a string");
+    /// assert_eq!(key1_value, "value1");
+    ///
+    /// let key2: TomlKeyPath = "child.key".parse()
+    ///     .expect("Expected to parse successfully");
+    /// let key2_value = key2.resolve(&toml_value)
+    ///     .expect("Expected to resolve")
+    ///     .as_str()
+    ///     .expect("Expected to be a string");
+    /// assert_eq!(key2_value, "value2");
+    /// ```
+    pub fn resolve<'a>(&self, value: &'a toml::Value) -> Option<&'a toml::Value> {
+        Self::resolve_impl(&mut self.clone(), value)
+    }
+
+    fn resolve_impl<'a>(key: &mut Self, value: &'a toml::Value) -> Option<&'a toml::Value> {
+        if key.0.is_empty() {
+            return Some(value);
+        }
+
+        let current_key = key.0.remove(0);
+
+        match value {
+            Value::Table(table) => {
+                let value = table.get(&current_key)?;
+                Self::resolve_impl(key, value)
+            }
+            _ => None,
+        }
+    }
+}
 
 impl std::fmt::Display for TomlKeyPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -194,8 +255,46 @@ impl std::fmt::Display for TomlKeyPath {
 impl FromStr for TomlKeyPath {
     type Err = Error;
 
+    /// Parse a string into a [`TomlKeyPath`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use toml_env::TomlKeyPath;
+    ///
+    /// "key".parse::<TomlKeyPath>()
+    ///     .expect("Expected to parse successfully");
+    /// "key.key".parse::<TomlKeyPath>()
+    ///     .expect("Expected to parse successfully");
+    /// "key.key.key".parse::<TomlKeyPath>()
+    ///     .expect("Expected to parse successfully");
+    /// "".parse::<TomlKeyPath>()
+    ///     .expect_err("Expected to parse to fail");
+    /// ".".parse::<TomlKeyPath>()
+    ///     .expect_err("Expected to parse to fail");
+    /// ".key".parse::<TomlKeyPath>()
+    ///     .expect_err("Expected to parse to fail");
+    /// "key.".parse::<TomlKeyPath>()
+    ///     .expect_err("Expected to parse to fail");
+    /// ```
+
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(Self(s.split('.').map(ToOwned::to_owned).collect()))
+        if s.is_empty() {
+            return Err(InnerError::UnableToParseTomlKeyPath { path: s.to_owned() }.into());
+        }
+
+        let v: Vec<String> = s
+            .split('.')
+            .map(|k| {
+                if k.is_empty() {
+                    Err(InnerError::UnableToParseTomlKeyPath { path: s.to_owned() })
+                } else {
+                    Ok(k.to_owned())
+                }
+            })
+            .collect::<std::result::Result<_, InnerError>>()?;
+
+        Ok(Self(v))
     }
 }
 

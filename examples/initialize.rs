@@ -53,33 +53,3 @@ pub fn main() -> anyhow::Result<()> {
     );
     Ok(())
 }
-
-fn test() {
-    use serde::{Deserialize, Serialize};
-    use std::str::FromStr;
-    use toml_env::{initialize, Args, TomlKeyPath};
-
-    #[derive(Serialize, Deserialize)]
-    struct Config {
-        value_1: String,
-        value_2: bool,
-    }
-
-    // Normally you may choose set this from a shell script or some
-    // other source in your environment (docker file or server config file).
-    std::env::set_var("VALUE_1", "Hello World");
-    std::env::set_var("VALUE_2", "true");
-
-    let config: Config = initialize(Args {
-        map_env: [("VALUE_1", "value_1"), ("VALUE_2", "value_2")]
-            .into_iter()
-            .map(|(key, value)| (key, TomlKeyPath::from_str(value).unwrap()))
-            .collect(),
-        ..Args::default()
-    })
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(config.value_1, "Hello World");
-    assert_eq!(config.value_2, true);
-}
