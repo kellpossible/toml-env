@@ -87,7 +87,8 @@ EOM
 ```rust
 use serde::{Deserialize, Serialize};
 use tempfile::tempdir;
-use toml_env::{Args, initialize, Logging};
+use toml_env::{Args, initialize, Logging, TomlKeyPath};
+use std::str::FromStr;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +135,10 @@ value_2=true
 );
 
 std::env::set_var(
+    "VALUE_1",
+    "Something from Environment"
+);
+std::env::set_var(
     "VALUE_5",
     "Something from Environment"
 );
@@ -156,14 +161,14 @@ let config: Config = initialize(Args {
     config_path: Some(&config_path),
     config_variable_name: "MY_CONFIG",
     logging: Logging::StdOut,
-    map_env: {
-        let mut map = std::collections::HashMap::new();
-        map.insert(
-            "VALUE_5".to_owned(),
-            "child.value_5".parse().unwrap()
-        );
-        map
-    }
+    map_env: [
+        ("VALUE_1", "value_1"),
+        ("VALUE_5", "child.value_5"),
+    ]
+    .into_iter()
+    .map(|(key, value)| {
+        (key, TomlKeyPath::from_str(value).unwrap())
+    })
 })
 .unwrap()
 .unwrap();
