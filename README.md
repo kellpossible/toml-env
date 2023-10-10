@@ -148,6 +148,9 @@ assert_eq!(config.value_1, "Something from .env.toml");
 assert_eq!(config.value_2, true);
 assert_eq!(config.child.value_3, -5);
 assert_eq!(config.child.value_4, 16);
+
+let secret = std::env::var("SECRET").unwrap();
+assert_eq!(secret, "hello-world");
 ```
 
 ## Changelog
