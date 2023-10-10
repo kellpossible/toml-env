@@ -5,6 +5,7 @@
 ### Documentation
 
 - Add badges to README.
+- Fix type code comment for `Result`.
 
 ## v1.0.0
 

@@ -15,7 +15,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 use toml::Value;
 
-/// Convenience type shorthand for `Result<T, InnerError>`.
+/// Convenience type shorthand for `Result<T, Error>`.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Default name for attempting to load the configuration (and environment variables) from a file.
