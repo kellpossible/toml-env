@@ -1,5 +1,8 @@
 # `toml-env`
 
+[![crates.io](https://img.shields.io/crates/v/toml-env.svg)](https://crates.io/crates/toml-env) [![docs.rs](https://img.shields.io/docsrs/toml-env.svg)](https://docs.rs/toml-env/latest/toml_env/) [![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/kellpossible/toml-env/rust.yml)](https://github.com/kellpossible/toml-env/actions/workflows/rust.yml)
+
+
 A simple configuration library using `toml`.
 
 This library is designed to load a configuration for an application at startup using the `initialize()` function. The configuration can be loaded (in order of preference):
