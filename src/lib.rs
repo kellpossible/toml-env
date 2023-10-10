@@ -378,7 +378,7 @@ fn initialize_env<'a>(
                 buffer.push_str(&format!("\n{k} => {v}"));
             }
         }
-        buffer.push_str("\x1b[0m");
+        buffer.push_str("\x1b[0m\n");
         log_info(
             logging,
             format_args!("Loading config from current environment variables: {buffer}"),

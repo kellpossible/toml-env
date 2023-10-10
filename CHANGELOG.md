@@ -1,5 +1,11 @@
 # Changelog for `toml-env`
 
+## v0.3.2
+
+### Bug Fixes
+
+- Fix logging formatting of environment variables mapped.
+
 ## v0.3.1
 
 ### Bug Fixes
