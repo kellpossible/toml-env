@@ -4,6 +4,12 @@
 
 ### Bug Fixes
 
+- Improved logging for setting environment variables from `.env.toml`.
+
+## v0.3.3
+
+### Bug Fixes
+
 - Improved log formatting.
 
 ## v0.3.2

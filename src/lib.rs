@@ -277,6 +277,14 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
         }
     };
 
+    if table.is_empty() {
+        return Ok(None);
+    }
+    log_info(
+        logging,
+        format_args!("Setting environment variables specified in {dotenv_path:?}:\n"),
+    );
+
     let mut config: Option<C> = None;
     for (key, value) in table {
         let value_string = match value {
@@ -315,6 +323,7 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
         };
 
         if let Some(value_string) = value_string {
+            log_info(logging, format_args!("\n\x1b[34m{key}\x1b[0m"));
             std::env::set_var(key.as_str(), value_string)
         }
     }
@@ -378,7 +387,7 @@ fn initialize_env<'a>(
                 buffer.push_str(&format!("\n{k} => {v}"));
             }
         }
-        buffer.push_str("\x1b[0m\n");
+        buffer.push_str("\x1b[0m");
         log_info(
             logging,
             format_args!("Loading config from current environment variables: {buffer}"),
