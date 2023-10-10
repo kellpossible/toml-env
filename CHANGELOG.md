@@ -1,5 +1,17 @@
 # Changelog for `toml-env`
 
+## v0.3.5
+
+### Bug Fixes
+
+- Improved log formatting.
+
+## v0.3.4
+
+### Bug Fixes
+
+- Improved log formatting.
+
 ## v0.3.3
 
 ### Bug Fixes
