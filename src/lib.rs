@@ -372,7 +372,7 @@ fn initialize_env<'a>(
 
     if !matches!(logging, Logging::None) {
         let mut buffer = String::new();
-        buffer.push_str("\n\x1b[34m");
+        buffer.push_str("\x1b[34m");
         for (k, v) in &map_env {
             if std::env::var(k).is_ok() {
                 buffer.push_str(&format!("\n{k} => {v}"));
@@ -592,7 +592,7 @@ where
             .expect("Expected to be able to re-serialize config toml");
         log_info(
             logging,
-            format_args!("{config_variable_name}:\n\x1b[34m{config_string}\x1b[0m"),
+            format_args!("Parsed configuration:\n\x1b[34m{config_string}\x1b[0m"),
         );
     }
 
