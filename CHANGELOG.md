@@ -1,5 +1,11 @@
 # Changelog for `toml-env`
 
+## v1.1.1
+
+### Bug Fixes
+
+- Remove unecessary println.
+
 ## v1.1.0
 
 ### Documentation

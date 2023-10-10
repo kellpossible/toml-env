@@ -639,8 +639,6 @@ where
         (config, source)
     });
 
-    println!("about to initialize dotenv");
-
     let dotenv_config =
         initialize_dotenv_toml(dotenv_path, config_variable_name, logging)?.map(|config| {
             (
