@@ -6,7 +6,7 @@
 
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -164,12 +164,8 @@ enum InnerError {
         /// Source of the error.
         error: serde_toml_merge::Error,
     },
-    /// Unable to parse [`TomlKeyPath`].
-    #[error("Unable to parse path {path:?} into TomlKeyPath")]
-    UnableToParseTomlKeyPath {
-        /// Path that could not be parsed.
-        path: String,
-    },
+    #[error("Error inserting toml value")]
+    InsertTomlValueError(#[from] InsertTomlValueError),
 }
 
 /// What method of logging for this library to use.
@@ -187,12 +183,29 @@ pub enum Logging {
     Log,
 }
 
-/// A path to a key into a [`toml::Value`]. In the format of `key.key.key` when parsed using
-/// [`FromStr`].
+type InnerResult<T> = std::result::Result<T, InnerError>;
+
+/// A path to a key into a [`toml::Value`]. In the format of `key.0.key` (`0` for indexing into an
+/// array) when parsed using [`FromStr`].
 ///
 /// See [`TomlKeyPath::resolve()`] for an example.
-#[derive(Debug, Clone)]
-pub struct TomlKeyPath(Vec<String>);
+#[derive(Debug, Clone, Default)]
+pub struct TomlKeyPath(Vec<PathElement>);
+
+#[derive(Debug, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
+enum PathElement {
+    TableProperty(String),
+    ArrayIndex(usize),
+}
+
+impl std::fmt::Display for PathElement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PathElement::TableProperty(p) => p.fmt(f),
+            PathElement::ArrayIndex(i) => i.fmt(f),
+        }
+    }
+}
 
 impl TomlKeyPath {
     /// Resolve a value contained within a [`toml::Value`] using this [`TomlKeyPath`].
@@ -205,25 +218,31 @@ impl TomlKeyPath {
     ///
     /// let toml_value = toml::from_str(r#"
     /// key="value1"
+    /// array=["hello", "world"]
     /// [child]
     /// key="value2"
     /// "#).unwrap();
     ///
-    /// let key1: TomlKeyPath = "key".parse()
-    ///     .expect("Expected to parse successfully");
+    /// let key1: TomlKeyPath = "key".parse().unwrap();
     /// let key1_value = key1.resolve(&toml_value)
     ///     .expect("Expected to resolve")
     ///     .as_str()
     ///     .expect("Expected to be a string");
     /// assert_eq!(key1_value, "value1");
     ///
-    /// let key2: TomlKeyPath = "child.key".parse()
-    ///     .expect("Expected to parse successfully");
+    /// let key2: TomlKeyPath = "child.key".parse().unwrap();
     /// let key2_value = key2.resolve(&toml_value)
     ///     .expect("Expected to resolve")
     ///     .as_str()
     ///     .expect("Expected to be a string");
     /// assert_eq!(key2_value, "value2");
+    ///
+    /// let hello: TomlKeyPath = "array.0".parse().unwrap();
+    /// let hello_value = hello.resolve(&toml_value)
+    ///     .expect("Expected to resolve")
+    ///     .as_str()
+    ///     .expect("Expected to be a string");
+    /// assert_eq!(hello_value, "hello");
     /// ```
     pub fn resolve<'a>(&self, value: &'a toml::Value) -> Option<&'a toml::Value> {
         Self::resolve_impl(&mut self.clone(), value)
@@ -237,10 +256,20 @@ impl TomlKeyPath {
         let current_key = key.0.remove(0);
 
         match value {
-            Value::Table(table) => {
-                let value = table.get(&current_key)?;
-                Self::resolve_impl(key, value)
-            }
+            Value::Table(table) => match current_key {
+                PathElement::TableProperty(p) => {
+                    let value = table.get(&p)?;
+                    Self::resolve_impl(key, value)
+                }
+                PathElement::ArrayIndex(_) => None,
+            },
+            Value::Array(array) => match current_key {
+                PathElement::ArrayIndex(i) => {
+                    let value = array.get(i)?;
+                    Self::resolve_impl(key, value)
+                }
+                PathElement::TableProperty(_) => None,
+            },
             _ => None,
         }
     }
@@ -248,12 +277,19 @@ impl TomlKeyPath {
 
 impl std::fmt::Display for TomlKeyPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0.join("."))
+        f.write_str(
+            &self
+                .0
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("."),
+        )
     }
 }
 
 impl FromStr for TomlKeyPath {
-    type Err = Error;
+    type Err = ();
 
     /// Parse a string into a [`TomlKeyPath`].
     ///
@@ -262,43 +298,42 @@ impl FromStr for TomlKeyPath {
     /// ```rust
     /// use toml_env::TomlKeyPath;
     ///
-    /// "key".parse::<TomlKeyPath>()
-    ///     .expect("Expected to parse successfully");
-    /// "key.key".parse::<TomlKeyPath>()
-    ///     .expect("Expected to parse successfully");
-    /// "key.key.key".parse::<TomlKeyPath>()
-    ///     .expect("Expected to parse successfully");
-    /// "".parse::<TomlKeyPath>()
-    ///     .expect_err("Expected to parse to fail");
-    /// ".".parse::<TomlKeyPath>()
-    ///     .expect_err("Expected to parse to fail");
-    /// ".key".parse::<TomlKeyPath>()
-    ///     .expect_err("Expected to parse to fail");
-    /// "key.".parse::<TomlKeyPath>()
-    ///     .expect_err("Expected to parse to fail");
+    /// "key".parse::<TomlKeyPath>().unwrap();
+    /// "key.0".parse::<TomlKeyPath>().unwrap();
+    /// "key.key".parse::<TomlKeyPath>().unwrap();
+    /// "key.0.key".parse::<TomlKeyPath>().unwrap();
+    /// "key.key.key".parse::<TomlKeyPath>().unwrap();
+    /// "".parse::<TomlKeyPath>().unwrap();
+    /// ".".parse::<TomlKeyPath>().unwrap();
+    /// ".key".parse::<TomlKeyPath>().unwrap();
+    /// "key.".parse::<TomlKeyPath>().unwrap();
     /// ```
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, ()> {
         if s.is_empty() {
-            return Err(InnerError::UnableToParseTomlKeyPath { path: s.to_owned() }.into());
+            return Ok(Self::default());
         }
 
-        let v: Vec<String> = s
+        let v: Vec<PathElement> = s
             .split('.')
-            .map(|k| {
+            .filter_map(|k| {
                 if k.is_empty() {
-                    Err(InnerError::UnableToParseTomlKeyPath { path: s.to_owned() })
+                    None
                 } else {
-                    Ok(k.to_owned())
+                    if let Ok(i) = usize::from_str(k) {
+                        Some(PathElement::ArrayIndex(i))
+                    } else {
+                        Some(PathElement::TableProperty(k.to_owned()))
+                    }
                 }
             })
-            .collect::<std::result::Result<_, InnerError>>()?;
+            .collect();
 
         Ok(Self(v))
     }
 }
 
-/// Args for automatically mapping environment variables into the config.
+/// Automatically map environment variables into config.
 pub struct AutoMapEnvArgs<'a> {
     /// The divider that separates different levels of the parent.child relationship for the
     /// mapping. This will get replaced with `.` when converting the name of a variable to a [`TomlKeyPath`]. The default value is [`DEFAULT_DOTENV_PATH`].
@@ -332,7 +367,7 @@ pub struct Args<'a> {
     pub logging: Logging,
     /// Map the specified environment variables into config keys.
     pub map_env: HashMap<&'a str, TomlKeyPath>,
-    /// Automatically map environment variables into config.
+    /// See [`AutoMapEnvArgs`].
     pub auto_map_env: Option<AutoMapEnvArgs<'a>>,
 }
 
@@ -364,7 +399,7 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
     dotenv_path: &'a Path,
     config_variable_name: &'a str,
     logging: Logging,
-) -> std::result::Result<Option<C>, InnerError> {
+) -> InnerResult<Option<C>> {
     let path = Path::new(dotenv_path);
     if !path.exists() {
         return Ok(None);
@@ -452,13 +487,144 @@ fn initialize_dotenv_toml<'a, C: DeserializeOwned + Serialize>(
     Ok(config)
 }
 
+#[derive(Debug, thiserror::Error)]
+enum InsertTomlValueError {
+    #[error("Table property {property:?} can only be used to index into a table. Cannot index into {value:?}")]
+    TablePropertyCannotIndex {
+        property: String,
+        value: toml::Value,
+    },
+    #[error(
+        "Array index {index} can only be used to index into an array. Cannot index into {value:?}"
+    )]
+    ArrayIndexCannotIndex { index: usize, value: toml::Value },
+    #[error("Array index {index} cannot be greater than the length of {array:?}")]
+    ArrayOutOfBounds {
+        index: usize,
+        array: Vec<toml::Value>,
+    },
+}
+
+/// Insert a `new_value` into a `value` at the location specified by `path`, creating any required
+/// tables or arrays if they are missing. If the `path` is empty, it will replace the value
+/// entirely.
+fn insert_toml_value(
+    value: &mut toml::Value,
+    mut path: TomlKeyPath,
+    new_value: Value,
+) -> std::result::Result<(), InsertTomlValueError> {
+    if path.0.is_empty() {
+        *value = new_value;
+        return Ok(());
+    }
+
+    let current_key = path.0.remove(0);
+    let next_key = path.0.get(0);
+
+    match (current_key, value) {
+        (PathElement::TableProperty(property), Value::Table(table)) => {
+            let next_value = table.get_mut(&property);
+            match (next_value, next_key) {
+                (None, None) => {
+                    table.insert(property, new_value);
+                    return Ok(());
+                }
+                (None, Some(PathElement::ArrayIndex(_))) => {
+                    table.insert(property.clone(), toml::Value::Array(Vec::with_capacity(1)));
+                    return insert_toml_value(
+                        table
+                            .get_mut(&property)
+                            .expect("Expect inserted property to be present"),
+                        path,
+                        new_value,
+                    );
+                }
+                (None, Some(PathElement::TableProperty(_))) => {
+                    table.insert(
+                        property.clone(),
+                        toml::Value::Table(toml::Table::with_capacity(1)),
+                    );
+                    return insert_toml_value(
+                        table
+                            .get_mut(&property)
+                            .expect("Expect inserted property to be present"),
+                        path,
+                        new_value,
+                    );
+                }
+                (Some(next_value), None) => {
+                    *next_value = new_value;
+                    return Ok(());
+                }
+                (Some(next_value), Some(_)) => {
+                    return insert_toml_value(next_value, path, new_value)
+                }
+            }
+        }
+        (PathElement::TableProperty(property), value) => {
+            return Err(InsertTomlValueError::TablePropertyCannotIndex {
+                property,
+                value: value.clone(),
+            })
+        }
+        (PathElement::ArrayIndex(index), Value::Array(array)) => {
+            if index > array.len() {
+                return Err(InsertTomlValueError::ArrayOutOfBounds {
+                    index,
+                    array: array.clone(),
+                });
+            }
+            let next_value = array.get_mut(index);
+            match (next_value, next_key) {
+                (None, None) => {
+                    array.insert(index, new_value);
+                    return Ok(());
+                }
+                (None, Some(PathElement::ArrayIndex(_))) => {
+                    array.insert(index, toml::Value::Array(Vec::with_capacity(1)));
+                    return insert_toml_value(
+                        array
+                            .get_mut(index)
+                            .expect("Expect inserted element to be present"),
+                        path,
+                        new_value,
+                    );
+                }
+                (None, Some(PathElement::TableProperty(_))) => {
+                    array.insert(index, toml::Value::Table(toml::Table::with_capacity(1)));
+                    return insert_toml_value(
+                        array
+                            .get_mut(index)
+                            .expect("Expect inserted element to be present"),
+                        path,
+                        new_value,
+                    );
+                }
+                (Some(next_value), None) => {
+                    *next_value = new_value;
+                    return Ok(());
+                }
+                (Some(next_value), Some(_)) => {
+                    return insert_toml_value(next_value, path, new_value)
+                }
+            }
+        }
+        (PathElement::ArrayIndex(index), value) => {
+            Err(InsertTomlValueError::ArrayIndexCannotIndex {
+                index,
+                value: value.clone(),
+            })
+        }
+    }
+}
+
 /// Initialize from environment variables.
 fn initialize_env(
     logging: Logging,
     map_env: HashMap<&'_ str, TomlKeyPath>,
     auto_args: Option<AutoMapEnvArgs<'_>>,
     config_variable_name: &'_ str,
-) -> std::result::Result<Option<Value>, InnerError> {
+) -> InnerResult<Option<Value>> {
     fn parse_toml_value(value: String) -> Value {
         if let Ok(value) = bool::from_str(&value) {
             return Value::Boolean(value);
@@ -475,26 +641,10 @@ fn initialize_env(
 
         Value::String(value)
     }
-    fn insert_toml_value(table: &mut toml::Table, mut key: TomlKeyPath, value: Value) {
-        if key.0.is_empty() {
-            return;
-        }
 
-        let current_key = key.0.remove(0);
-
-        if key.0.is_empty() {
-            table.insert(current_key, value);
-        } else {
-            let table = table
-                .entry(&current_key)
-                .or_insert(toml::Table::new().into())
-                .as_table_mut()
-                .expect("Expected table");
-            insert_toml_value(table, key, value)
-        }
-    }
-
-    let mut map_env: HashMap<Cow<'_, str>, TomlKeyPath> = map_env
+    // Using a BTreeMap to ensure values are sorted by environment variable, so that array indices
+    // are in the correct order of insertion to avoid an out of bounds.
+    let mut map_env: BTreeMap<Cow<'_, str>, TomlKeyPath> = map_env
         .into_iter()
         .map(|(key, value)| (Cow::Borrowed(key), value))
         .collect();
@@ -548,7 +698,7 @@ fn initialize_env(
 
     log_info(logging, format_args!("Loading config from environment"));
 
-    let mut config = toml::Table::new();
+    let mut config = toml::Value::Table(toml::Table::new());
     for (variable_name, toml_key) in map_env {
         let value = match std::env::var(variable_name.as_ref()) {
             Ok(value) => value,
@@ -561,7 +711,7 @@ fn initialize_env(
             }
         };
         let value = parse_toml_value(value);
-        insert_toml_value(&mut config, toml_key.clone(), value);
+        insert_toml_value(&mut config, toml_key.clone(), value)?;
     }
 
     Ok(Some(config.into()))
@@ -771,4 +921,136 @@ where
     }
 
     Ok(config)
+}
+
+#[cfg(test)]
+mod test {
+    use crate::InsertTomlValueError;
+
+    use super::insert_toml_value;
+    #[test]
+    fn insert_toml_value_empty_path() {
+        let mut value = toml::Value::String("Hello".to_owned());
+        insert_toml_value(
+            &mut value,
+            "".parse().unwrap(),
+            toml::Value::String("World".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(value.as_str().unwrap(), "World");
+    }
+
+    #[test]
+    fn insert_toml_value_table_property() {
+        let mut value = toml::Value::Table(toml::Table::new());
+        insert_toml_value(
+            &mut value,
+            "child".parse().unwrap(),
+            toml::Value::String("Hello Child".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(value.get("child").unwrap().as_str().unwrap(), "Hello Child");
+    }
+
+    #[test]
+    fn insert_toml_value_table_property_property() {
+        let mut value = toml::Value::Table(toml::Table::new());
+        insert_toml_value(
+            &mut value,
+            "child.value".parse().unwrap(),
+            toml::Value::String("Hello Child Value".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            value
+                .get("child")
+                .unwrap()
+                .get("value")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "Hello Child Value"
+        );
+    }
+
+    #[test]
+    fn insert_toml_value_create_array() {
+        let mut value = toml::Value::Array(Vec::new());
+        insert_toml_value(
+            &mut value,
+            "0".parse().unwrap(),
+            toml::Value::String("Hello Element".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(value.get(0).unwrap().as_str().unwrap(), "Hello Element");
+    }
+
+    #[test]
+    fn insert_toml_value_array_out_of_bounds_error() {
+        let mut value = toml::Value::Array(Vec::new());
+        let error = insert_toml_value(
+            &mut value,
+            "1".parse().unwrap(),
+            toml::Value::String("Hello Element".to_owned()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InsertTomlValueError::ArrayOutOfBounds { .. }
+        ))
+    }
+
+    #[test]
+    fn insert_toml_value_table_property_index_error() {
+        let mut value = toml::Value::Array(Vec::new());
+        let error = insert_toml_value(
+            &mut value,
+            "key".parse().unwrap(),
+            toml::Value::String("Hello Element".to_owned()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InsertTomlValueError::TablePropertyCannotIndex { .. }
+        ))
+    }
+
+    #[test]
+    fn insert_toml_value_array_index_cannot_index_error() {
+        let mut value = toml::Value::Table(toml::Table::new());
+        let error = insert_toml_value(
+            &mut value,
+            "0".parse().unwrap(),
+            toml::Value::String("Hello Element".to_owned()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            InsertTomlValueError::ArrayIndexCannotIndex { .. }
+        ))
+    }
+
+    #[test]
+    fn insert_toml_value_table_child_create_array() {
+        let mut value = toml::Value::Table(toml::Table::new());
+        insert_toml_value(
+            &mut value,
+            "child.0".parse().unwrap(),
+            toml::Value::String("Hello Element".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            value
+                .get("child")
+                .unwrap()
+                .get(0)
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "Hello Element"
+        );
+    }
 }

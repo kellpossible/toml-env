@@ -1,5 +1,11 @@
 # Changelog for `toml-env`
 
+## v1.2.0
+
+### New Features
+
+- Support toml arrays.
+
 ## v1.1.1
 
 ### Bug Fixes

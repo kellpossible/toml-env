@@ -251,6 +251,7 @@ struct Config {
     value_1: String,
     value_2: bool,
     child: Child,
+    array: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -302,6 +303,14 @@ std::env::set_var(
     "MY_APP__CHILD__VALUE_6",
     "Something from Environment"
 );
+std::env::set_var(
+    "MY_APP__ARRAY__1",
+    "Hello"
+);
+std::env::set_var(
+    "MY_APP__ARRAY__0",
+    "Hello"
+);
 
 // Normally you would read this from config.toml
 // (or whatever name you want) file.
@@ -341,8 +350,10 @@ let config: Config = initialize(Args {
 
 assert_eq!(config.value_1, "Something from .env.toml");
 assert_eq!(config.value_2, true);
+assert_eq!(config.array[0], "Hello");
 assert_eq!(config.child.value_3, -5);
 assert_eq!(config.child.value_4, 16);
+assert_eq!(config.child.value_5, "Something from Environment");
 
 let secret = std::env::var("SECRET").unwrap();
 assert_eq!(secret, "hello-world");
